@@ -511,6 +511,38 @@ async def cmd_sync_counters(message: types.Message):
     finally:
         db.close()
 
+@dp.message(Command("clear_comments"))
+async def cmd_clear_comments(message: types.Message):
+    """Очистить ВСЕ комментарии, но сохранить посты и обновить кнопки"""
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await message.answer("🗑 Удаляю все комментарии и баны...")
+    db = SessionLocal()
+    try:
+        deleted = db.query(Comment).delete()
+        db.query(BannedUser).delete()
+        db.commit()
+        
+        # После очистки сразу обновляем счетчики на всех кнопках в Telegram
+        posts = db.query(Post).all()
+        updated = 0
+        for p in posts:
+            if p.channel_id and p.bot_message_id:
+                try:
+                    await update_post_button(p.id, db)
+                    updated += 1
+                except Exception:
+                    pass
+
+        await message.answer(
+            f"✅ Готово!\n"
+            f"Удалено комментариев: {deleted}\n"
+            f"Обновлено кнопок в Telegram: {updated}\n\n"
+            f"Теперь все кнопки показывают актуальный счётчик."
+        )
+    finally:
+        db.close()
 
 
 from contextlib import asynccontextmanager
@@ -530,6 +562,7 @@ async def lifespan(app: FastAPI):
         BotCommand(command="unban", description="🔓 Разбанить (нужен ID)"),
         BotCommand(command="disable_all", description="🛑 Отключить комментарии ВЕЗДЕ"),
         BotCommand(command="sync_counters", description="🔄 Синхронизировать счетчики кнопок"),
+        BotCommand(command="clear_comments", description="🗑 Очистить все комментарии"),
         BotCommand(command="link", description="🔗 Получить ручную ссылку"),
         BotCommand(command="myid", description="Узнать свой ID"),
     ]
