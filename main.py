@@ -484,6 +484,35 @@ async def cmd_disable_all(message: types.Message):
     finally:
         db.close()
 
+@dp.message(Command("sync_counters"))
+async def cmd_sync_counters(message: types.Message):
+    """Синхронизировать счетчики кнопок с реальными данными из базы"""
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await message.answer("🔄 Обновляю счетчики на всех кнопках...")
+    db = SessionLocal()
+    updated = 0
+    failed = 0
+    try:
+        posts = db.query(Post).all()
+        for p in posts:
+            if p.channel_id and p.bot_message_id:
+                try:
+                    await update_post_button(p.id, db)
+                    updated += 1
+                except Exception:
+                    failed += 1
+        await message.answer(
+            f"✅ Синхронизация завершена!\n"
+            f"Обновлено кнопок: {updated}\n"
+            f"Ошибок: {failed}"
+        )
+    finally:
+        db.close()
+
+
+
 from contextlib import asynccontextmanager
 
 bot_task = None
@@ -500,6 +529,7 @@ async def lifespan(app: FastAPI):
         BotCommand(command="bans", description="📋 Список забаненных"),
         BotCommand(command="unban", description="🔓 Разбанить (нужен ID)"),
         BotCommand(command="disable_all", description="🛑 Отключить комментарии ВЕЗДЕ"),
+        BotCommand(command="sync_counters", description="🔄 Синхронизировать счетчики кнопок"),
         BotCommand(command="link", description="🔗 Получить ручную ссылку"),
         BotCommand(command="myid", description="Узнать свой ID"),
     ]
