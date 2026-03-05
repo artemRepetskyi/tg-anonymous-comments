@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Анонимные Комментарии</title>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* CSS стили под стиль Telegram */
+        body {
+            /* Переменные цвета из темы пользователя Telegram */
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+
+        #comments-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px 0;
+            display: flex;
+            flex-direction: column;
+            overscroll-behavior: none;
+            /* Предотвращает дергание всего экрана при скролле */
+            -webkit-overflow-scrolling: touch;
+        }
+
+        /* Стиль комментариев в виде списка */
+        .comment-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 8px 15px;
+            width: 100%;
+            box-sizing: border-box;
+            background-color: transparent;
+            transition: background-color 0.5s;
+        }
+
+        .comment-anim {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+
+        .comment-avatar {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 15px;
+            font-weight: bold;
+            color: #fff;
+            flex-shrink: 0;
+            margin-right: 12px;
+        }
+
+        .comment-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-bottom: 1px solid var(--tg-theme-secondary-bg-color, #e5e5ea);
+            padding-bottom: 8px;
+        }
+
+        .comment-item:last-child .comment-content {
+            border-bottom: none;
+        }
+
+        .comment-header {
+            display: flex;
+            justify-content: flex-start;
+            align-items: baseline;
+            margin-bottom: 3px;
+            gap: 6px;
+        }
+
+        .comment-name {
+            font-weight: 600;
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .time {
+            font-size: 12px;
+            color: var(--tg-theme-hint-color, #999999);
+            flex-shrink: 0;
+            margin-left: auto;
+        }
+
+        .comment-text {
+            font-size: 15px;
+            color: var(--tg-theme-text-color, #000000);
+            line-height: 1.35;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        #input-area {
+            display: flex;
+            padding: 10px 15px;
+            background-color: var(--tg-theme-bg-color, #ffffff);
+            border-top: 1px solid var(--tg-theme-secondary-bg-color, #e5e5ea);
+            padding-bottom: calc(env(safe-area-inset-bottom, 20px) + 35px);
+            /* ЕЩЕ СИЛЬНЕЕ Увеличили отступ снизу для iPhone */
+        }
+
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 12px 15px;
+            border: 1px solid var(--tg-theme-secondary-bg-color, #ccc);
+            border-radius: 20px;
+            background-color: var(--tg-theme-secondary-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            outline: none;
+            font-size: 16px;
+        }
+
+        #send-btn {
+            background-color: transparent;
+            color: var(--tg-theme-button-color, #3390ec);
+            border: none;
+            padding: 0 5px 0 15px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            outline: none;
+            width: 50px;
+            /* Фиксируем ширину, чтобы поле ввода не прыгало при замене иконки на текст */
+            flex-shrink: 0;
+        }
+
+        #send-btn:disabled {
+            opacity: 0.5;
+        }
+
+        #scroll-bottom-btn {
+            position: fixed;
+            bottom: calc(env(safe-area-inset-bottom, 20px) + 110px);
+            /* Чуть выше, чтобы не накладывалась на инпут */
+            right: 15px;
+            /* Справа, как в оригинальном Телеграме */
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background-color: var(--tg-theme-secondary-bg-color, #2c2c2e);
+            color: var(--tg-theme-text-color, #ffffff);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            /* Полупрозрачная БЕЛАЯ обводка */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s, transform 0.2s;
+            transform: scale(0.8);
+            z-index: 100;
+            padding: 0;
+            outline: none;
+        }
+
+        #scroll-bottom-btn.visible {
+            opacity: 1;
+            pointer-events: auto;
+            transform: scale(1);
+        }
+
+        #status-message {
+            text-align: center;
+            color: var(--tg-theme-hint-color, #999999);
+            margin-top: 20px;
+            font-size: 14px;
+        }
+
+        /* Анимация появления комментария (микроанимации) */
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .comment-anim {
+            animation: fadeIn 0.3s ease-out forwards;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="comments-container">
+        <!-- Комментарии -->
+        <div id="status-message">Загрузка комментариев...</div>
+    </div>
+
+    <!-- Иконочка перемотки в самый низ -->
+    <button id="scroll-bottom-btn" aria-label="Вниз">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
+        </svg>
+    </button>
+
+    <div id="reply-bar"
+        style="display: none; padding: 8px 15px; background: var(--tg-theme-secondary-bg-color, #f4f4f5); font-size: 13px; color: var(--tg-theme-hint-color, #999); border-top: 1px solid var(--tg-theme-secondary-bg-color, #e5e5ea); justify-content: space-between; align-items: center;">
+        <div>Ответить: <b id="reply-name" style="color: var(--tg-theme-text-color, #000);"></b></div>
+        <div onclick="cancelReply()" style="cursor: pointer; padding: 0 5px;">❌</div>
+    </div>
+
+    <div id="input-area">
+        <input type="text" id="comment-input" placeholder="Написать комментарий...">
+        <button id="send-btn">
+            <!-- Иконка отправки в стиле Telegram (синий самолетик) -->
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+                <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+            </svg>
+        </button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.ready();
+
+        // Разворачиваем окно на 100% высоты, чтобы человек случайно не свайпнул его вниз
+        tg.expand();
+        // Включаем поддержку темы в WebApp
+        document.documentElement.className = tg.colorScheme;
+
+        /**
+         * Получаем параметр startapp. 
+         * В Mini App параметром является start_param из initDataUnsafe (когда открывается по ссылке t.me/bot?startapp=).
+         * Если он пуст, дополнительно проверим query параметры. 
+         */
+        const urlParams = new URLSearchParams(window.location.search);
+        const postId = tg.initDataUnsafe?.start_param || urlParams.get('startapp');
+
+        const apiUrl = window.location.origin;
+        const commentsContainer = document.getElementById('comments-container');
+        const commentInput = document.getElementById('comment-input');
+        const sendBtn = document.getElementById('send-btn');
+        const scrollBtn = document.getElementById('scroll-bottom-btn');
+
+        // Переменные для ответа
+        let replyToId = null;
+        let replyToName = null;
+
+        function cancelReply() {
+            replyToId = null;
+            replyToName = null;
+            document.getElementById('reply-bar').style.display = 'none';
+        }
+
+        // ЗАЩИТА: Блокируем доступ с обычных браузеров по прямой ссылке
+        if (!tg.initData) {
+            document.body.innerHTML = `
+                <div style="display: flex; height: 100vh; width: 100vw; align-items: center; justify-content: center; text-align: center; padding: 20px; font-family: sans-serif; background: #fff; color: #000;">
+                    <div>
+                        <h2>Доступ запрещен</h2>
+                        <p>Пожалуйста, откройте эти комментарии через приложение Telegram.</p>
+                    </div>
+                </div>`;
+            throw new Error("Остановка скрипта: не в Telegram");
+        }
+
+        let adminId = null;
+        fetch(`${apiUrl}/config`, { headers: { 'ngrok-skip-browser-warning': 'true' } })
+            .then(res => res.json())
+            .then(data => { adminId = data.admin_id; })
+            .catch(e => console.error('Ошибка при получении конфига', e));
+
+        if (!postId) {
+            commentsContainer.innerHTML = '<div id="status-message">❌ Ошибка: Не указан ID поста (startapp).</div>';
+        } else {
+            loadComments(true);
+            // Живой чат: проверяем новые сообщения каждые 3 секунды
+            setInterval(() => loadComments(false), 3000);
+        }
+
+        let loadedCommentIds = new Set();
+
+        // Загрузка комментариев
+        async function loadComments(isInitial = false) {
+            try {
+                const response = await fetch(`${apiUrl}/comments/${postId}`, {
+                    method: 'GET',
+                    headers: { 'ngrok-skip-browser-warning': 'true' }
+                });
+                if (!response.ok) throw new Error('Ошибка при загрузке комментариев');
+
+                const comments = await response.json();
+
+                const serverCommentIds = new Set(comments.map(c => c.id));
+
+                // Если комментарий был удален/пользователь забанен на сервере,
+                // плавно удаляем его из интерфейса, чтобы не дергать экран у других людей
+                for (const id of loadedCommentIds) {
+                    if (!serverCommentIds.has(id)) {
+                        const rowToRemove = document.getElementById('comment-row-' + id);
+                        if (rowToRemove) {
+                            rowToRemove.style.transition = 'opacity 0.3s';
+                            rowToRemove.style.opacity = '0';
+                            setTimeout(() => rowToRemove.remove(), 300);
+                        }
+                        loadedCommentIds.delete(id);
+                    }
+                }
+
+                let statusMsg = document.getElementById('status-message');
+                if (comments.length === 0) {
+                    if (!statusMsg) {
+                        statusMsg = document.createElement('div');
+                        statusMsg.id = 'status-message';
+                        commentsContainer.appendChild(statusMsg);
+                    }
+                    statusMsg.textContent = 'Пока нет комментариев. Напишите первым!';
+                } else if (statusMsg) {
+                    statusMsg.remove();
+                }
+
+                let addedNew = false;
+                comments.forEach(c => {
+                    // Если такого комментария еще нет на экране, добавляем
+                    if (!loadedCommentIds.has(c.id)) {
+                        loadedCommentIds.add(c.id);
+                        // Не анимируем стартовую загрузку, только новые прилетающие комменты
+                        addCommentToView(c, !isInitial);
+                        addedNew = true;
+                    }
+                });
+
+                // Прокручиваем вниз, только если добавились новые и мы В САМОМ НИЗУ,
+                // либо если это самая первая загрузка
+                if (addedNew) {
+                    const isAtBottom = commentsContainer.scrollHeight - commentsContainer.scrollTop - commentsContainer.clientHeight < 150;
+                    if (isAtBottom || isInitial) {
+                        scrollToBottom();
+                    } else {
+                        // Показываем кнопку "вниз", так как пришло новое сообщение, а мы читаем историю
+                        scrollBtn.classList.add('visible');
+                    }
+                }
+            } catch (error) {
+                console.error(error);
+                if (isInitial) {
+                    commentsContainer.innerHTML = '<div id="status-message">❌ Ошибка сети при получении. Попробуйте обновить страницу.</div>';
+                }
+            }
+        }
+
+        // Добавление комментария в интерфейс
+        function addCommentToView(comment, animate = true) {
+            // Убираем статус если он есть
+            const statusMsg = document.getElementById('status-message');
+            if (statusMsg) statusMsg.remove();
+
+            // Проверяем, это наше сообщение или чужое?
+            const myUserId = tg.initDataUnsafe?.user?.id;
+            const isMyComment = myUserId && comment.author_id === myUserId;
+
+            const msgRow = document.createElement('div');
+            msgRow.id = 'comment-row-' + comment.id;
+
+            let className = 'comment-item';
+            if (animate) className += ' comment-anim';
+            msgRow.className = className;
+
+            // Цвета для аватаров и имен
+            const bgColors = ['#e17076', '#eda86c', '#a695e7', '#7bc862', '#6ec9cb', '#65aadd', '#ee7aae'];
+            const colorIndex = comment.author_id ? Math.abs(comment.author_id) % bgColors.length : 0;
+            const userColor = bgColors[colorIndex];
+
+            // Аватарка ВСЕГДА (как в комментариях групп Telegram)
+            const avatar = document.createElement('div');
+            avatar.className = 'comment-avatar';
+            avatar.style.backgroundColor = userColor;
+
+            let initial = (comment.author_name || 'А').charAt(0).toUpperCase();
+            if (initial === '⭐' || initial === '👑') {
+                initial = (comment.author_name || 'А').charAt(2).toUpperCase() || '⭐';
+            }
+            avatar.textContent = initial;
+            msgRow.appendChild(avatar);
+
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'comment-content';
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'comment-header';
+
+            const nameSpan = document.createElement('div');
+            nameSpan.className = 'comment-name';
+            nameSpan.style.color = userColor;
+            nameSpan.textContent = comment.author_name || 'Аноним';
+
+            const timeSpan = document.createElement('div');
+            timeSpan.className = 'time';
+
+            const date = new Date(comment.created_at + 'Z');
+            const timeFormat = new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            timeSpan.textContent = timeFormat.format(date);
+
+            headerDiv.appendChild(nameSpan);
+            headerDiv.appendChild(timeSpan);
+
+            contentDiv.appendChild(headerDiv);
+
+            // --- БЛОК ОТВЕТА (REPLY) ---
+            if (comment.reply_to_name && comment.reply_to_id) {
+                const replyLine = document.createElement('div');
+                replyLine.style.cursor = 'pointer';
+                replyLine.style.display = 'flex';
+                replyLine.style.flexDirection = 'column';
+                replyLine.style.borderLeft = `3px solid ${userColor}`;
+                replyLine.style.marginBottom = '6px';
+                // Полупрозрачный фон цвета человека или дефолтный если его нет
+                replyLine.style.backgroundColor = 'var(--tg-theme-secondary-bg-color, #f4f4f5)';
+                replyLine.style.borderRadius = '4px';
+                replyLine.style.padding = '4px 8px';
+
+                const repName = document.createElement('div');
+                repName.style.fontWeight = '600';
+                repName.style.color = userColor;
+                repName.style.fontSize = '12px';
+                repName.style.marginBottom = '2px';
+
+                let rName = comment.reply_to_name;
+                let rText = "Комментарий";
+                if (rName.includes(': ')) {
+                    const parts = rName.split(': ');
+                    rName = parts.shift();
+                    rText = parts.join(': ');
+                } else {
+                    const parts = rName.split(':');
+                    if (parts.length > 1) {
+                        rName = parts[0];
+                        rText = parts.slice(1).join(':');
+                    }
+                }
+                repName.textContent = rName;
+
+                const repText = document.createElement('div');
+                repText.style.color = 'var(--tg-theme-text-color, #000)';
+                repText.style.fontSize = '12px';
+                repText.style.whiteSpace = 'nowrap';
+                repText.style.overflow = 'hidden';
+                repText.style.textOverflow = 'ellipsis';
+                repText.textContent = rText || "Длинный текст...";
+
+                replyLine.appendChild(repName);
+                replyLine.appendChild(repText);
+
+                replyLine.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const originalRow = document.getElementById('comment-row-' + comment.reply_to_id);
+                    if (originalRow) {
+                        originalRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        const oldBg = originalRow.style.backgroundColor;
+                        originalRow.style.backgroundColor = 'rgba(51, 144, 236, 0.4)'; // Подсветка всего ряда
+                        setTimeout(() => {
+                            originalRow.style.backgroundColor = oldBg;
+                        }, 1000);
+                    }
+                });
+
+                contentDiv.appendChild(replyLine);
+            }
+            // --- КОНЕЦ БЛОКА ОТВЕТА ---
+
+            const textSpan = document.createElement('div');
+            textSpan.className = 'comment-text';
+            textSpan.textContent = comment.text;
+
+            contentDiv.appendChild(textSpan);
+
+            msgRow.appendChild(contentDiv);
+            commentsContainer.appendChild(msgRow);
+
+            // Обработка длительного нажатия (или клика) для модерации / ответа
+            if (myUserId) {
+                msgRow.style.cursor = 'pointer'; // Подсказка, что на коммент можно нажать
+                msgRow.addEventListener('click', () => {
+                    const buttonsArray = [];
+
+                    buttonsArray.push({ id: 'reply', type: 'default', text: 'Ответить' });
+
+                    if (!isMyComment && myUserId === adminId) {
+                        buttonsArray.push({ id: 'ban', type: 'destructive', text: 'Удалить комментарий и Забанить' });
+                    }
+
+                    if (isMyComment) {
+                        buttonsArray.push({ id: 'delete', type: 'destructive', text: 'Удалить мой комментарий' });
+                    }
+
+                    if (buttonsArray.length === 0) return;
+
+                    buttonsArray.push({ type: 'cancel' });
+
+                    tg.showPopup({
+                        title: `Действия для ${comment.author_name}`,
+                        message: comment.text.substring(0, 30) + (comment.text.length > 30 ? '...' : ''),
+                        buttons: buttonsArray
+                    }, async function (buttonId) {
+                        if (buttonId === 'reply') {
+                            replyToId = comment.id;
+
+                            // Сокращаем текст оригинального сообщения для отображения в плашке ответа
+                            let shortText = comment.text.substring(0, 20);
+                            if (comment.text.length > 20) shortText += '...';
+
+                            replyToName = `${comment.author_name}: ${shortText}`;
+
+                            document.getElementById('reply-name').textContent = replyToName;
+                            document.getElementById('reply-bar').style.display = 'flex';
+                            document.getElementById('comment-input').focus();
+                        } else if (buttonId === 'ban' && myUserId === adminId) {
+                            try {
+                                const rb = await fetch(`${apiUrl}/ban`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'ngrok-skip-browser-warning': 'true',
+                                        'X-Telegram-Init-Data': tg.initData
+                                    },
+                                    body: JSON.stringify({ comment_id: comment.id, admin_id: myUserId })
+                                });
+                                if (rb.ok) {
+                                    tg.showAlert('Пользователь навсегда заблокирован, его комментарии удалены.');
+                                    // Удаляем визуально без перезагрузки
+                                    msgRow.style.display = 'none';
+                                } else {
+                                    tg.showAlert('Ошибка: у вас нет прав администратора!');
+                                }
+                            } catch (e) {
+                                console.error(e);
+                                tg.showAlert('Ошибка при попытке бана.');
+                            }
+                        } else if (buttonId === 'delete') {
+                            try {
+                                const rb = await fetch(`${apiUrl}/delete`, {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'ngrok-skip-browser-warning': 'true',
+                                        'X-Telegram-Init-Data': tg.initData
+                                    },
+                                    body: JSON.stringify({ comment_id: comment.id, user_id: myUserId })
+                                });
+                                if (rb.ok) {
+                                    // Просто скрываем контейнер с сообщением, без перезагрузки и прокрутки
+                                    msgRow.style.transition = 'opacity 0.3s';
+                                    msgRow.style.opacity = '0';
+                                    setTimeout(() => msgRow.style.display = 'none', 300);
+                                } else {
+                                    tg.showAlert('Не удалось удалить комментарий.');
+                                }
+                            } catch (e) {
+                                console.error(e);
+                                tg.showAlert('Ошибка при удалении.');
+                            }
+                        }
+                    });
+                });
+            }
+        }
+
+        // Прокрутка вниз
+        function scrollToBottom() {
+            commentsContainer.scrollTop = commentsContainer.scrollHeight;
+        }
+
+        // Логика кнопки "вернуться вниз"
+        commentsContainer.addEventListener('scroll', () => {
+            // Если отмотали наверх больше чем на 150px
+            if (commentsContainer.scrollHeight - commentsContainer.scrollTop - commentsContainer.clientHeight > 150) {
+                scrollBtn.classList.add('visible');
+            } else {
+                scrollBtn.classList.remove('visible');
+            }
+        });
+
+        scrollBtn.addEventListener('click', () => {
+            // Мгновенная прокрутка
+            commentsContainer.scrollTo({ top: commentsContainer.scrollHeight, behavior: 'smooth' });
+        });
+
+        function startCooldown(seconds) {
+            sendBtn.disabled = true;
+            let current = seconds;
+            const originalHtml = `
+                <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                </svg>
+            `;
+            sendBtn.innerHTML = `<span style="font-size: 16px;">${current}с</span>`;
+
+            const timerId = setInterval(() => {
+                current -= 1;
+                if (current <= 0) {
+                    clearInterval(timerId);
+                    sendBtn.disabled = false;
+                    sendBtn.innerHTML = originalHtml;
+                } else {
+                    sendBtn.innerHTML = `<span style="font-size: 16px;">${current}с</span>`;
+                }
+            }, 1000);
+        }
+
+        // Отправка комментария
+        async function sendComment() {
+            const text = commentInput.value.trim();
+            if (!text || !postId || sendBtn.disabled) return;
+
+            let authorName = "Аноним";
+            let authorId = null;
+            const user = tg.initDataUnsafe?.user;
+            if (user) {
+                authorName = user.first_name;
+                if (user.last_name) authorName += " " + user.last_name;
+                authorId = user.id;
+            }
+
+            // Сразу очищаем поле
+            commentInput.value = '';
+
+            // Защита приложения: кнопка отключается на 5 секунд в UI
+            startCooldown(5);
+
+            try {
+                const response = await fetch(`${apiUrl}/comments`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'ngrok-skip-browser-warning': 'true',
+                        'X-Telegram-Init-Data': tg.initData
+                    },
+                    body: JSON.stringify({
+                        post_id: parseInt(postId),
+                        text: text,
+                        author_name: authorName,
+                        author_id: authorId,
+                        reply_to_id: replyToId,
+                        reply_to_name: replyToName
+                    })
+                });
+
+                if (response.ok) {
+                    cancelReply();
+                    const newComment = await response.json();
+
+                    // Моментально отображаем комментарий, не дожидаясь ответа от интервала loadComments
+                    if (!loadedCommentIds.has(newComment.id)) {
+                        loadedCommentIds.add(newComment.id);
+                        addCommentToView(newComment, true);
+                        scrollToBottom();
+                    }
+
+                    tg.HapticFeedback.notificationOccurred('success');
+                } else {
+                    let errorMessage = 'Ошибка сервера';
+                    try {
+                        const errorData = await response.json();
+                        if (errorData.detail) {
+                            errorMessage = errorData.detail;
+                        }
+                    } catch (e) {
+                        // Если не смогли прочитать json, используем стандартные
+                        if (response.status === 429) errorMessage = "Не пишите так часто, подождите.";
+                        if (response.status === 403) errorMessage = "Вы были заблокированы администратором.";
+                    }
+                    throw new Error(errorMessage);
+                }
+            } catch (error) {
+                console.error(error);
+                if (tg.initDataUnsafe && Object.keys(tg.initDataUnsafe).length > 0) {
+                    tg.showAlert(error.message);
+                    tg.HapticFeedback.notificationOccurred('error');
+                } else {
+                    alert(error.message);
+                }
+            }
+        }
+
+        // Обработчик события по клику и Enter
+        sendBtn.addEventListener('click', sendComment);
+
+        commentInput.addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                sendComment();
+            }
+        });
+
+        // Haptic Feedback для UX "как в телеге"
+        commentInput.addEventListener('focus', () => {
+            tg.HapticFeedback.selectionChanged();
+        });
+    </script>
+</body>
+
+</html>
