@@ -4,3 +4,4 @@ sqlalchemy
 aiogram
 pydantic
 python-dotenv
+pyngrok
