@@ -4,3 +4,7 @@ __pycache__/
 database.db
 ngrok.log
 *.pyc
+revert.py
+evil_edit.py
+test_*.py
+sweep.py
