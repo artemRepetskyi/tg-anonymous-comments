@@ -573,7 +573,28 @@ async def on_shutdown():
 if __name__ == "__main__":
     import uvicorn
     import os
-    # Берем порт из переменной окружения хостинга (Pterodactyl), иначе используем 8000
     port = int(os.getenv("SERVER_PORT", 8000))
-    # Запуск сервера (теперь файл называется app.py)
-    uvicorn.run("app:app", host="0.0.0.0", port=port)
+    
+    try:
+        from pyngrok import ngrok
+        import time
+        # Берем токен из .env (нужно будет добавить NGROK_AUTHTOKEN)
+        ngrok_auth = os.getenv("NGROK_AUTHTOKEN")
+        if ngrok_auth:
+            ngrok.set_auth_token(ngrok_auth)
+            
+        time.sleep(2) # Даем время порту
+        tunnel = ngrok.connect(port)
+        public_url = tunnel.public_url.replace("http://", "https://")
+        
+        print("\n" + "="*70)
+        print("  🟢 ВАШ БОТ УСПЕШНО ЗАПУЩЕН НА СЕРВЕРЕ! 🟢")
+        print("="*70)
+        print("👇 СКОПИРУЙТЕ ЭТУ ССЫЛКУ И ВСТАВЬТЕ В .env В ПОЛЕ WEBAPP_URL 👇")
+        print(f"WEBAPP_URL={public_url}/static/index.html")
+        print("="*70 + "\n")
+    except Exception as e:
+        print(f"\n[!] Не удалось запустить ngrok туннель: {e}\n")
+
+    # Запуск сервера
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
