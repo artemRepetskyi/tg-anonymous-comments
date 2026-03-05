@@ -58,6 +58,13 @@ class BannedUser(Base):
     id = Column(Integer, primary_key=True, index=True)
     author_id = Column(Integer, unique=True, index=True)
 
+class CommentLike(Base):
+    __tablename__ = "comment_likes"
+    id = Column(Integer, primary_key=True, index=True)
+    comment_id = Column(Integer, ForeignKey("comments.id"), index=True)
+    user_id = Column(Integer, index=True)
+
+
 Base.metadata.create_all(bind=engine)
 
 import json
@@ -125,6 +132,8 @@ class CommentResponse(BaseModel):
     reply_to_id: int | None = None
     reply_to_name: str | None = None
     created_at: datetime
+    likes_count: int = 0
+    is_liked_by_me: bool = False
     
     model_config = {"from_attributes": True} # pydantic v2
 
@@ -141,9 +150,58 @@ def get_config():
     return {"admin_id": ADMIN_ID}
 
 @app.get("/comments/{post_id}", response_model=list[CommentResponse])
-def get_comments(post_id: int, db: Session = Depends(get_db)):
+def get_comments(
+    post_id: int, 
+    db: Session = Depends(get_db),
+    x_telegram_init_data: str | None = Header(None)
+):
     comments = db.query(Comment).filter(Comment.post_id == post_id).order_by(Comment.created_at).all()
-    return comments
+    user = get_telegram_user(x_telegram_init_data, BOT_TOKEN) if x_telegram_init_data else None
+    user_id = user.get("id") if user else None
+    
+    result = []
+    for c in comments:
+        likes_count = db.query(CommentLike).filter(CommentLike.comment_id == c.id).count()
+        is_liked = False
+        if user_id:
+            is_liked = db.query(CommentLike).filter(CommentLike.comment_id == c.id, CommentLike.user_id == user_id).first() is not None
+            
+        c_dict = {
+            "id": c.id, "post_id": c.post_id, "author_id": c.author_id, "author_name": c.author_name,
+            "text": c.text, "reply_to_id": c.reply_to_id, "reply_to_name": c.reply_to_name,
+            "created_at": c.created_at, "likes_count": likes_count, "is_liked_by_me": is_liked
+        }
+        result.append(c_dict)
+    return result
+
+@app.post("/comments/{comment_id}/like")
+def toggle_like(
+    comment_id: int, 
+    db: Session = Depends(get_db),
+    x_telegram_init_data: str | None = Header(None)
+):
+    user = get_telegram_user(x_telegram_init_data, BOT_TOKEN)
+    if not user:
+        raise HTTPException(status_code=403, detail="Доступ запрещен. Запрос не из Telegram.")
+    
+    user_id = user.get("id")
+    comment = db.query(Comment).filter(Comment.id == comment_id).first()
+    if not comment:
+        raise HTTPException(status_code=404, detail="Комментарий не найден.")
+        
+    existing_like = db.query(CommentLike).filter(CommentLike.comment_id == comment_id, CommentLike.user_id == user_id).first()
+    if existing_like:
+        db.delete(existing_like)
+        db.commit()
+        liked = False
+    else:
+        new_like = CommentLike(comment_id=comment_id, user_id=user_id)
+        db.add(new_like)
+        db.commit()
+        liked = True
+        
+    likes_count = db.query(CommentLike).filter(CommentLike.comment_id == comment_id).count()
+    return {"liked": liked, "likes_count": likes_count}
 
 # Хранилище для анти-спама
 RATE_LIMIT_STORE = {}

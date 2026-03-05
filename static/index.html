@@ -200,6 +200,45 @@
         .comment-anim {
             animation: fadeIn 0.3s ease-out forwards;
         }
+
+        .like-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            margin-left: 10px;
+            font-size: 13px;
+            color: var(--tg-theme-hint-color, #999999);
+            cursor: pointer;
+            user-select: none;
+            transition: transform 0.2s, color 0.2s;
+        }
+
+        .like-btn.liked {
+            color: #ff3347;
+            /* Telegram default like red */
+        }
+
+        .like-btn.hidden {
+            display: none !important;
+        }
+
+        @keyframes heartPop {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.4);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .heart-pop {
+            animation: heartPop 0.3s ease-out;
+        }
     </style>
 </head>
 
@@ -487,96 +526,189 @@
 
             contentDiv.appendChild(textSpan);
 
+            // Блок лайков (внизу справа или в timeSpan, но положим в headerDiv)
+            const likeBtn = document.createElement('div');
+            likeBtn.className = 'like-btn';
+            if (comment.is_liked_by_me) {
+                likeBtn.classList.add('liked');
+            }
+            if (comment.likes_count === 0) {
+                likeBtn.classList.add('hidden');
+            }
+            likeBtn.innerHTML = `<span>${comment.is_liked_by_me ? '❤️' : '🤍'}</span> <b>${comment.likes_count}</b>`;
+
+            // Лайк по самой кнопке
+            likeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleLike(comment.id, likeBtn);
+            });
+
+            headerDiv.appendChild(likeBtn);
+
             msgRow.appendChild(contentDiv);
             commentsContainer.appendChild(msgRow);
 
-            // Обработка длительного нажатия (или клика) для модерации / ответа
+            // Обработка клика (одинарный = меню, двойной = лайк)
+            let lastTap = 0;
+            let tapTimeout;
+
             if (myUserId) {
-                msgRow.style.cursor = 'pointer'; // Подсказка, что на коммент можно нажать
-                msgRow.addEventListener('click', () => {
-                    const buttonsArray = [];
+                msgRow.style.cursor = 'pointer';
+                msgRow.addEventListener('click', (e) => {
+                    // Если кликнули по reply, игнорируем
+                    if (e.target.closest('.reply-line')) return;
 
-                    buttonsArray.push({ id: 'reply', type: 'default', text: 'Ответить' });
+                    const currentTime = new Date().getTime();
+                    const tapLength = currentTime - lastTap;
 
-                    if (!isMyComment && myUserId === adminId) {
-                        buttonsArray.push({ id: 'ban', type: 'destructive', text: 'Удалить комментарий и Забанить' });
+                    if (tapLength < 300 && tapLength > 0) {
+                        // Double tap - лайкаем
+                        clearTimeout(tapTimeout);
+                        e.preventDefault();
+                        toggleLike(comment.id, likeBtn);
+
+                        // Анимация прыгающего сердечка по центру (опционально) или просто pop
+                        likeBtn.classList.remove('heart-pop');
+                        void likeBtn.offsetWidth; // trigger reflow
+                        likeBtn.classList.add('heart-pop');
+                    } else {
+                        // Single tap - отложенный вызов меню
+                        tapTimeout = setTimeout(() => {
+                            showCommentMenu(comment, isMyComment, msgRow);
+                        }, 300);
                     }
-
-                    if (isMyComment) {
-                        buttonsArray.push({ id: 'delete', type: 'destructive', text: 'Удалить мой комментарий' });
-                    }
-
-                    if (buttonsArray.length === 0) return;
-
-                    buttonsArray.push({ type: 'cancel' });
-
-                    tg.showPopup({
-                        title: `Действия для ${comment.author_name}`,
-                        message: comment.text.substring(0, 30) + (comment.text.length > 30 ? '...' : ''),
-                        buttons: buttonsArray
-                    }, async function (buttonId) {
-                        if (buttonId === 'reply') {
-                            replyToId = comment.id;
-
-                            // Сокращаем текст оригинального сообщения для отображения в плашке ответа
-                            let shortText = comment.text.substring(0, 20);
-                            if (comment.text.length > 20) shortText += '...';
-
-                            replyToName = `${comment.author_name}: ${shortText}`;
-
-                            document.getElementById('reply-name').textContent = replyToName;
-                            document.getElementById('reply-bar').style.display = 'flex';
-                            document.getElementById('comment-input').focus();
-                        } else if (buttonId === 'ban' && myUserId === adminId) {
-                            try {
-                                const rb = await fetch(`${apiUrl}/ban`, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'ngrok-skip-browser-warning': 'true',
-                                        'X-Telegram-Init-Data': tg.initData
-                                    },
-                                    body: JSON.stringify({ comment_id: comment.id, admin_id: myUserId })
-                                });
-                                if (rb.ok) {
-                                    tg.showAlert('Пользователь навсегда заблокирован, его комментарии удалены.');
-                                    // Удаляем визуально без перезагрузки
-                                    msgRow.style.display = 'none';
-                                } else {
-                                    tg.showAlert('Ошибка: у вас нет прав администратора!');
-                                }
-                            } catch (e) {
-                                console.error(e);
-                                tg.showAlert('Ошибка при попытке бана.');
-                            }
-                        } else if (buttonId === 'delete') {
-                            try {
-                                const rb = await fetch(`${apiUrl}/delete`, {
-                                    method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                        'ngrok-skip-browser-warning': 'true',
-                                        'X-Telegram-Init-Data': tg.initData
-                                    },
-                                    body: JSON.stringify({ comment_id: comment.id, user_id: myUserId })
-                                });
-                                if (rb.ok) {
-                                    // Просто скрываем контейнер с сообщением, без перезагрузки и прокрутки
-                                    msgRow.style.transition = 'opacity 0.3s';
-                                    msgRow.style.opacity = '0';
-                                    setTimeout(() => msgRow.style.display = 'none', 300);
-                                } else {
-                                    tg.showAlert('Не удалось удалить комментарий.');
-                                }
-                            } catch (e) {
-                                console.error(e);
-                                tg.showAlert('Ошибка при удалении.');
-                            }
-                        }
-                    });
+                    lastTap = currentTime;
                 });
             }
         }
+
+        async function toggleLike(commentId, likeBtnElement) {
+            try {
+                // Оптимистичный UI (меняем сразу)
+                const isCurrentlyLiked = likeBtnElement.classList.contains('liked');
+                let currentCount = parseInt(likeBtnElement.querySelector('b').textContent) || 0;
+
+                if (isCurrentlyLiked) {
+                    likeBtnElement.classList.remove('liked');
+                    likeBtnElement.innerHTML = `<span>🤍</span> <b>${currentCount - 1}</b>`;
+                    if (currentCount - 1 <= 0) likeBtnElement.classList.add('hidden');
+                } else {
+                    likeBtnElement.classList.remove('hidden');
+                    likeBtnElement.classList.add('liked');
+                    likeBtnElement.classList.add('heart-pop');
+                    likeBtnElement.innerHTML = `<span>❤️</span> <b>${currentCount + 1}</b>`;
+                }
+
+                const response = await fetch(`${apiUrl}/comments/${commentId}/like`, {
+                    method: 'POST',
+                    headers: {
+                        'ngrok-skip-browser-warning': 'true',
+                        'X-Telegram-Init-Data': tg.initData || ''
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    // Синхронизируем с сервером
+                    if (data.liked) {
+                        likeBtnElement.classList.remove('hidden');
+                        likeBtnElement.classList.add('liked');
+                        likeBtnElement.innerHTML = `<span>❤️</span> <b>${data.likes_count}</b>`;
+                    } else {
+                        likeBtnElement.classList.remove('liked');
+                        likeBtnElement.innerHTML = `<span>🤍</span> <b>${data.likes_count}</b>`;
+                        if (data.likes_count <= 0) likeBtnElement.classList.add('hidden');
+                    }
+                }
+            } catch (e) {
+                console.error("Error toggling like", e);
+            }
+        }
+
+        function showCommentMenu(comment, isMyComment, msgRow) {
+            const buttonsArray = [];
+
+            buttonsArray.push({ id: 'reply', type: 'default', text: 'Ответить' });
+
+            // adminId is global
+            if (!isMyComment && tg.initDataUnsafe?.user?.id === adminId) {
+                buttonsArray.push({ id: 'ban', type: 'destructive', text: 'Удалить комментарий и Забанить' });
+            }
+
+            if (isMyComment) {
+                buttonsArray.push({ id: 'delete', type: 'destructive', text: 'Удалить мой комментарий' });
+            }
+
+            if (buttonsArray.length === 0) return;
+
+            buttonsArray.push({ type: 'cancel' });
+
+            tg.showPopup({
+                title: `Действия для ${comment.author_name}`,
+                message: comment.text.substring(0, 30) + (comment.text.length > 30 ? '...' : ''),
+                buttons: buttonsArray
+            }, async function (buttonId) {
+                if (buttonId === 'reply') {
+                    replyToId = comment.id;
+
+                    // Сокращаем текст оригинального сообщения для отображения в плашке ответа
+                    let shortText = comment.text.substring(0, 20);
+                    if (comment.text.length > 20) shortText += '...';
+
+                    replyToName = `${comment.author_name}: ${shortText}`;
+
+                    document.getElementById('reply-name').textContent = replyToName;
+                    document.getElementById('reply-bar').style.display = 'flex';
+                    document.getElementById('comment-input').focus();
+                } else if (buttonId === 'ban' && tg.initDataUnsafe?.user?.id === adminId) {
+                    try {
+                        const rb = await fetch(`${apiUrl}/ban`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'ngrok-skip-browser-warning': 'true',
+                                'X-Telegram-Init-Data': tg.initData
+                            },
+                            body: JSON.stringify({ comment_id: comment.id, admin_id: tg.initDataUnsafe?.user?.id })
+                        });
+                        if (rb.ok) {
+                            tg.showAlert('Пользователь навсегда заблокирован, его комментарии удалены.');
+                            // Удаляем визуально без перезагрузки
+                            msgRow.style.display = 'none';
+                        } else {
+                            tg.showAlert('Ошибка: у вас нет прав администратора!');
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        tg.showAlert('Ошибка при попытке бана.');
+                    }
+                } else if (buttonId === 'delete') {
+                    try {
+                        const rb = await fetch(`${apiUrl}/delete`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'ngrok-skip-browser-warning': 'true',
+                                'X-Telegram-Init-Data': tg.initData
+                            },
+                            body: JSON.stringify({ comment_id: comment.id, user_id: tg.initDataUnsafe?.user?.id })
+                        });
+                        if (rb.ok) {
+                            // Просто скрываем контейнер с сообщением, без перезагрузки и прокрутки
+                            msgRow.style.transition = 'opacity 0.3s';
+                            msgRow.style.opacity = '0';
+                            setTimeout(() => msgRow.style.display = 'none', 300);
+                        } else {
+                            tg.showAlert('Не удалось удалить комментарий.');
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        tg.showAlert('Ошибка при удалении.');
+                    }
+                }
+            });
+        }
+
 
         // Прокрутка вниз
         function scrollToBottom() {
