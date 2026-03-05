@@ -572,5 +572,8 @@ async def on_shutdown():
 
 if __name__ == "__main__":
     import uvicorn
-    # Запуск сервера
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    import os
+    # Берем порт из переменной окружения хостинга (Pterodactyl), иначе используем 8000
+    port = int(os.getenv("SERVER_PORT", 8000))
+    # Запуск сервера (теперь файл называется app.py)
+    uvicorn.run("app:app", host="0.0.0.0", port=port)
