@@ -484,16 +484,17 @@ async def cmd_disable_all(message: types.Message):
     finally:
         db.close()
 
+from contextlib import asynccontextmanager
+
 bot_task = None
 
-@app.on_event("startup")
-async def on_startup():
-    # Настраиваем красивое меню команд (синяя кнопка Menu) в боте!
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- STARTUP ---
     default_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="myid", description="Узнать свой ID (для админки)"),
     ]
-    
     admin_commands = [
         BotCommand(command="start", description="Главное меню"),
         BotCommand(command="bans", description="📋 Список забаненных"),
@@ -502,20 +503,25 @@ async def on_startup():
         BotCommand(command="link", description="🔗 Получить ручную ссылку"),
         BotCommand(command="myid", description="Узнать свой ID"),
     ]
-    
     try:
-        # Устанавливаем базовое меню для всех обычных пользователей
         await bot.set_my_commands(default_commands, scope=BotCommandScopeDefault())
-        
-        # Устанавливаем РАСШИРЕННОЕ меню только для твоего личного чата (ADMIN_ID)
         if ADMIN_ID != 0:
             await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=ADMIN_ID))
     except Exception as e:
         print(f"Не удалось обновить меню команд: {e}")
 
-    # Запуск поллинга бота в фоне при старте FastAPI
     global bot_task
     bot_task = asyncio.create_task(dp.start_polling(bot))
+    
+    yield # Сервер работает в этот момент
+    
+    # --- SHUTDOWN ---
+    if bot_task:
+        bot_task.cancel()
+    await bot.session.close()
+
+# Применяем lifespan к нашему приложению
+app.router.lifespan_context = lifespan
 
 @dp.callback_query(F.data.startswith("del_"))
 async def cb_delete_comment(callback: types.CallbackQuery):
@@ -561,14 +567,6 @@ async def cb_ban_user(callback: types.CallbackQuery):
     finally:
         db.close()
     await callback.answer()
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    # Жестко отменяем задачу при выключении сервера (чтобы Ctrl+C работал моментально)
-    if bot_task:
-        bot_task.cancel()
-    # Корректное закрытие сессии бота
-    await bot.session.close()
 
 if __name__ == "__main__":
     import uvicorn
